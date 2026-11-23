@@ -1,6 +1,6 @@
 # 公众号图文稿：手机上也能看 DWG 了
 
-> 说明：本文为可直接粘贴到微信公众号编辑器的图文稿。截图路径指向仓库 `screenshots/` 目录，按文中「配图位」标记插入即可。`{{REPO_URL}}` 在仓库创建后替换为实际地址。
+> 说明：本文为可直接粘贴到微信公众号编辑器的图文稿。截图路径指向仓库 `screenshots/` 目录，按文中「配图位」标记插入即可。`https://github.com/wangningping/shoujicad` 在仓库创建后替换为实际地址。
 
 ---
 
@@ -132,7 +132,7 @@ DWG 的支持来自 LibreDWG 的 WebAssembly 移植，约 7.8 MB 的 WASM 资源
 
 **七、开源与许可证**
 
-代码在 GitHub：`{{REPO_URL}}`
+代码在 GitHub：`https://github.com/wangningping/shoujicad`
 
 技术栈是 Vue 3 + Vite + TypeScript，DXF 解析用 MIT 许可的 `dxf-parser`，渲染是自研 Canvas2D，不依赖闭源 CAD 内核、不接在线转换服务。
 
