@@ -1,0 +1,15 @@
+{
+  "name": "CAD 查看器",
+  "short_name": "CAD 查看",
+  "description": "移动端 DXF / DWG 图纸查看器，纯本地解析，不上传文件。",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#f5f8fc",
+  "theme_color": "#f5f8fc",
+  "icons": [
+    { "src": "./icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "./icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}

@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>CAD 查看器 · 浏览器冒烟验证</title>
+  <style>
+    body { font: 14px/1.7 system-ui, sans-serif; margin: 24px; color: #243044; }
+    pre { background: #f4f6fa; padding: 16px; border-radius: 8px; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>浏览器冒烟验证</h1>
+  <p>通过 Vite 开发服务器访问 <code>/scripts/browser-smoke.html</code>。全部显示 PASS 即通过。</p>
+  <pre id="out">RUNNING...</pre>
+  <script type="module">
+    const out = document.getElementById('out')
+    const lines = []
+    const check = (label, ok, detail = '') => {
+      lines.push(`${ok ? 'PASS' : 'FAIL'}  ${label}${detail ? ' — ' + detail : ''}`)
+    }
+
+    try {
+      const text = await (await fetch('../samples/demo.dxf')).text()
+      const { parseDxf } = await import('/src/core/dxfLoader.ts')
+      const doc = parseDxf(text, 'demo.dxf', text.length, 'light')
+
+      check('DXF 解析出图元', doc.entities.length >= 10, `${doc.entities.length} 个`)
+      check('图层表非空', doc.layers.length >= 5, `${doc.layers.length} 个`)
+      check('包围盒有效', doc.bounds.maxX > doc.bounds.minX && doc.bounds.maxY > doc.bounds.minY)
+
+      const { fitCamera } = await import('/src/core/camera.ts')
+      const { renderScene } = await import('/src/core/render.ts')
+      const canvas = document.createElement('canvas')
+      canvas.width = 600
+      canvas.height = 380
+      const ctx = canvas.getContext('2d')
+      const camera = fitCamera(doc.bounds, 600, 380)
+      renderScene({
+        ctx,
+        width: 600,
+        height: 380,
+        document: doc,
+        camera,
+        hiddenLayers: new Set(),
+        background: '#f7f9fc'
+      })
+      const pixels = ctx.getImageData(0, 0, 600, 380).data
+      let drawn = 0
+      for (let i = 0; i < pixels.length; i += 4) {
+        if (pixels[i] < 200 || pixels[i + 1] < 200 || pixels[i + 2] < 200) drawn++
+      }
+      check('Canvas2D 实际绘制', drawn > 500, `${drawn} 个非背景像素`)
+
+      const hex = /^#[0-9a-f]{6}$/i
+      check(
+        '浅色/夜间双模式颜色',
+        doc.layers.every((l) => hex.test(l.darkColor)) && doc.entities.every((e) => !e.darkColor || hex.test(e.darkColor)),
+        `${doc.layers.length} 个图层含夜间色`
+      )
+
+      const darkCanvas = document.createElement('canvas')
+      darkCanvas.width = 600
+      darkCanvas.height = 380
+      const dctx = darkCanvas.getContext('2d')
+      renderScene({
+        ctx: dctx, width: 600, height: 380, document: doc, camera,
+        hiddenLayers: new Set(), background: '#18222f', dark: true
+      })
+      const dpx = dctx.getImageData(0, 0, 600, 380).data
+      let bright = 0
+      for (let i = 0; i < dpx.length; i += 4) {
+        if (dpx[i] > 120 || dpx[i + 1] > 120 || dpx[i + 2] > 120) bright++
+      }
+      check(
+        '夜间画布反向着色',
+        dpx[4] === 24 && dpx[5] === 34 && dpx[6] === 47 && bright > 500,
+        `背景 ${dpx[4]},${dpx[5]},${dpx[6]} · ${bright} 个亮像素`
+      )
+
+      const { renderMeasurements, measurementDistance, measurementBearing } = await import('/src/core/measure.ts')
+      const emptyOverlay = {
+        pendingPoint: null,
+        pendingKind: null,
+        active: null,
+        previewRadius: null,
+        previewAngle: null,
+        pendingLine: null,
+        hoverSegment: null
+      }
+      const measure = { kind: 'distance', id: 1, start: { x: 0, y: 0 }, end: { x: 100, y: 50 } }
+      check(
+        '测距长度/方位角计算',
+        Math.abs(measurementDistance(measure) - 111.803) < 0.01 && Math.abs(measurementBearing(measure) - 26.565) < 0.01
+      )
+      renderMeasurements(ctx, camera, 600, 380, [measure], emptyOverlay)
+      const overlay = ctx.getImageData(0, 0, 600, 380).data
+      let amber = 0
+      for (let i = 0; i < overlay.length; i += 4) {
+        if (overlay[i] > 150 && overlay[i + 1] > 90 && overlay[i + 1] < 180 && overlay[i + 2] < 110) amber++
+      }
+      check('测量叠加层绘制', amber > 20, `${amber} 个标注像素`)
+
+      renderMeasurements(dctx, camera, 600, 380, [measure], emptyOverlay, true)
+      const darkOverlay = dctx.getImageData(0, 0, 600, 380).data
+      let darkAmber = 0
+      for (let i = 0; i < darkOverlay.length; i += 4) {
+        if (darkOverlay[i] > 180 && darkOverlay[i + 1] > 120 && darkOverlay[i + 1] < 210 && darkOverlay[i + 2] < 130) darkAmber++
+      }
+      check('夜间测量高亮', darkAmber > 20, `${darkAmber} 个标注像素`)
+
+      const countPixels = (data, test) => {
+        let n = 0
+        for (let i = 0; i < data.length; i += 4) if (test(data[i], data[i + 1], data[i + 2])) n++
+        return n
+      }
+      const tealish = (r, g, b) => r < 90 && g > 110 && b > 100
+
+      // 半径：圆被高亮 + R 值标签
+      const radiusMeasure = { kind: 'radius', id: 2, center: { x: 220, y: 190 }, radius: 90, at: { x: 310, y: 190 } }
+      ctx.clearRect(0, 0, 600, 380)
+      renderMeasurements(ctx, camera, 600, 380, [radiusMeasure], emptyOverlay)
+      const radiusPx = ctx.getImageData(0, 0, 600, 380).data
+      check(
+        '半径测量：对象高亮 + 半径标注',
+        countPixels(radiusPx, tealish) > 120 && countPixels(radiusPx, (r, g, b) => r > 150 && g > 90 && g < 180 && b < 110) > 20,
+        `高亮 ${countPixels(radiusPx, tealish)} / 标注 ${countPixels(radiusPx, (r, g, b) => r > 150 && g > 90 && g < 180 && b < 110)}`
+      )
+
+      // 夹角：两条边高亮 + 角弧 + 度数
+      const angleMeasure = {
+        kind: 'angle',
+        id: 3,
+        vertex: { x: 0, y: 120 },
+        a: { x: 160, y: 120 },
+        b: { x: 120, y: 0 },
+        lineA: { a: { x: 0, y: 120 }, b: { x: 160, y: 120 } },
+        lineB: { a: { x: 0, y: 120 }, b: { x: 120, y: 0 } }
+      }
+      ctx.clearRect(0, 0, 600, 380)
+      renderMeasurements(ctx, camera, 600, 380, [angleMeasure], emptyOverlay)
+      const anglePx = ctx.getImageData(0, 0, 600, 380).data
+      check(
+        '夹角测量：两条边高亮 + 角弧',
+        countPixels(anglePx, tealish) > 80 && countPixels(anglePx, (r, g, b) => r > 150 && g > 90 && g < 180 && b < 110) > 10,
+        `高亮 ${countPixels(anglePx, tealish)} / 角弧 ${countPixels(anglePx, (r, g, b) => r > 150 && g > 90 && g < 180 && b < 110)}`
+      )
+
+      // 无效预览不应画任何东西
+      ctx.clearRect(0, 0, 600, 380)
+      renderMeasurements(ctx, camera, 600, 380, [], emptyOverlay)
+      const blankPx = ctx.getImageData(0, 0, 600, 380).data
+      check('无测量时不残留任何像素', countPixels(blankPx, (r, g, b) => r || g || b) === 0)
+
+      // ---- 对象捕捉 ----
+      const { buildSnapIndex, findSnap, renderSnapIndicator, SNAP_LABEL } = await import('/src/core/snap.ts')
+      const { boundsOfEntities } = await import('/src/core/geometry.ts')
+      const makeDoc = (entities) => ({
+        id: 'snap-test', name: 'snap-test', format: 'dxf', size: 0, importedAt: 0,
+        version: 'AC1015', layers: [], entities,
+        bounds: boundsOfEntities(entities), entityCounts: {}, unsupported: {}
+      })
+      const at = (x, y) => ({ x, y })
+      const queryAt = (index, p, extra = {}) =>
+        findSnap(index, p, { radius: 14, zoom: 1, hiddenLayers: new Set(), ...extra })
+
+      const cross = makeDoc([
+        { type: 'line', layer: '0', start: at(0, 0), end: at(100, 0) },
+        { type: 'line', layer: '0', start: at(50, -50), end: at(50, 50) }
+      ])
+      const crossIndex = buildSnapIndex(cross)
+      const kinds = new Set(crossIndex.points.map((p) => p.kind))
+      check('捕捉索引含端点/中点', kinds.has('endpoint') && kinds.has('midpoint'), `${crossIndex.points.length} 个候选点`)
+
+      const endpointHit = queryAt(crossIndex, at(1, 1))
+      check(
+        '端点优先于近点',
+        endpointHit && endpointHit.kind === 'endpoint' && endpointHit.point.x === 0 && endpointHit.point.y === 0,
+        endpointHit ? `${SNAP_LABEL[endpointHit.kind]} (${endpointHit.point.x}, ${endpointHit.point.y})` : '未命中'
+      )
+
+      const crossHit = queryAt(crossIndex, at(49, 1))
+      check(
+        '交点可捕捉且优先于中点',
+        crossHit && crossHit.kind === 'intersection' && Math.abs(crossHit.point.x - 50) < 1e-6 && Math.abs(crossHit.point.y) < 1e-6,
+        crossHit ? `${SNAP_LABEL[crossHit.kind]} (${crossHit.point.x}, ${crossHit.point.y})` : '未命中'
+      )
+
+      const nearestHit = queryAt(crossIndex, at(30, 1))
+      check(
+        '线上近点可捕捉',
+        nearestHit && nearestHit.kind === 'nearest' && Math.abs(nearestHit.point.y) < 1e-9 && Math.abs(nearestHit.point.x - 30) < 1e-9,
+        nearestHit ? `${SNAP_LABEL[nearestHit.kind]} (${nearestHit.point.x}, ${nearestHit.point.y})` : '未命中'
+      )
+
+      const farHit = queryAt(crossIndex, at(30, 40))
+      check('无候选时保持自由拖动', farHit === null)
+
+      const circleDoc = makeDoc([{ type: 'circle', layer: 'A', center: at(0, 0), radius: 80 }])
+      const circleIndex = buildSnapIndex(circleDoc)
+      const centerHit = queryAt(circleIndex, at(0.5, 0.5))
+      check('圆心可捕捉', centerHit && centerHit.kind === 'center')
+      const suppressedHit = queryAt(circleIndex, at(0.5, 0.5), { suppress: at(0, 0), suppressRadius: 2 })
+      check('抑制锚点后不再吸附回自身', suppressedHit === null)
+
+      const locked = centerHit
+      const lockedHit = queryAt(circleIndex, at(12, 12), { locked, escapeRadius: 20 })
+      const releasedHit = queryAt(circleIndex, at(30, 30), { locked, escapeRadius: 20 })
+      check(
+        '释放半径内锁定不抖动',
+        lockedHit && lockedHit.kind === 'center' && (releasedHit === null || releasedHit.kind !== 'center'),
+        `锁定 ${lockedHit ? lockedHit.kind : 'null'} · 释放 ${releasedHit ? releasedHit.kind : 'null'}`
+      )
+
+      const hiddenHit = queryAt(circleIndex, at(0.5, 0.5), { hiddenLayers: new Set(['A']) })
+      check('隐藏图层的点不参与捕捉', hiddenHit === null)
+
+      renderSnapIndicator(ctx, camera, 600, 380, endpointHit, false)
+      const snapCanvas = document.createElement('canvas')
+      snapCanvas.width = 600
+      snapCanvas.height = 380
+      const sctx = snapCanvas.getContext('2d')
+      renderSnapIndicator(sctx, camera, 600, 380, endpointHit, false)
+      const snapPixels = sctx.getImageData(0, 0, 600, 380).data
+      let teal = 0
+      for (let i = 0; i < snapPixels.length; i += 4) {
+        if (snapPixels[i] < 90 && snapPixels[i + 1] > 110 && snapPixels[i + 2] > 100) teal++
+      }
+      check('捕捉指示器绘制', teal > 20, `${teal} 个指示像素`)
+
+      const { LibreDwg } = await import('@mlightcad/libredwg-web')
+      const lib = await LibreDwg.create()
+      check('DWG WASM 可加载', typeof lib.dwg_read_data === 'function')
+    } catch (error) {
+      lines.push(`ERROR  ${error && error.stack ? error.stack : error}`)
+    }
+
+    out.textContent = lines.join('\n')
+  </script>
+</body>
+</html>
